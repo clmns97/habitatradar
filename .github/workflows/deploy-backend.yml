@@ -32,4 +32,4 @@ jobs:
             --project ${{ secrets.GCP_PROJECT_ID }} \
             --quiet \
             --allow-unauthenticated \
-            --set-env-vars FRONTEND_ORIGIN=${{ secrets.FRONTEND_ORIGIN }}
+            --set-env-vars FRONTEND_ORIGIN=${{ secrets.FRONTEND_ORIGIN }},DATABASE_URL=${{ secrets.DATABASE_URL }}
