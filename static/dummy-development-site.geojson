@@ -1,0 +1,109 @@
+{
+  "type": "FeatureCollection",
+  "name": "dummy-development-site",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "site_id": "DEV-001",
+        "name": "Riverside Mixed-Use Campus",
+        "project_type": "mixed_use",
+        "status": "planning",
+        "estimated_area_m2": 18500,
+        "owner": "HabitatRadar Demo"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [13.4012, 52.5208],
+            [13.4088, 52.5208],
+            [13.4088, 52.5162],
+            [13.4012, 52.5162],
+            [13.4012, 52.5208]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "site_id": "DEV-002",
+        "name": "North Transit Housing Block",
+        "project_type": "residential",
+        "status": "permit_review",
+        "estimated_area_m2": 12600,
+        "owner": "HabitatRadar Demo"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [13.3921, 52.5284],
+            [13.3973, 52.5284],
+            [13.3973, 52.5254],
+            [13.3921, 52.5254],
+            [13.3921, 52.5284]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "site_id": "DEV-003",
+        "name": "East Logistics Yard Expansion",
+        "project_type": "industrial",
+        "status": "concept",
+        "estimated_area_m2": 24300,
+        "owner": "HabitatRadar Demo"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [13.4322, 52.5032],
+            [13.4405, 52.5032],
+            [13.4405, 52.4986],
+            [13.4322, 52.4986],
+            [13.4322, 52.5032]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "site_id": "DEV-004",
+        "name": "Greenline Utility Corridor",
+        "project_type": "infrastructure",
+        "status": "feasibility",
+        "estimated_length_m": 1450,
+        "owner": "HabitatRadar Demo"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [13.4151, 52.5148],
+          [13.4202, 52.5164],
+          [13.4259, 52.5151],
+          [13.4317, 52.5172]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "site_id": "DEV-005",
+        "name": "South Monitoring Station",
+        "project_type": "support_facility",
+        "status": "active",
+        "owner": "HabitatRadar Demo"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [13.4074, 52.4957]
+      }
+    }
+  ]
+}
