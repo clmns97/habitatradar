@@ -8,6 +8,7 @@
 	import { cartoLightStyle } from '$lib/map-style';
 	import {
 		fetchNearestProtectedAreas,
+		fetchNearestProtectedAreasByGeoJSON,
 		groupByAreaType,
 		type ProtectedAreaFeature
 	} from '$lib/protected-areas';
@@ -26,7 +27,9 @@
 	let features = $state<ProtectedAreaFeature[]>([]);
 	let sidebarOpen = $state(true);
 	let draggingOver = $state(false);
-	let geojsonFileName = $state<string | null>(null);
+	let uploadedFeatures = $state<Array<{ id: string; name: string; feature: any }>>([]);
+	let activeUploadedFeatureId = $state<string | null>(null);
+	let hoveredUploadedFeatureId = $state<string | null>(null);
 	let selectedFeature = $state<ProtectedAreaFeature | null>(null);
 	let expandedGroups = $state<Record<string, boolean>>({});
 
@@ -91,6 +94,119 @@
 		if (!map) return;
 		const source = map.getSource('protected-areas') as GeoJSONSource | undefined;
 		source?.setData({ type: 'FeatureCollection', features: featureList });
+	}
+
+	function setUploadedGeometryData(data: any) {
+		if (!map) return;
+		const source = map.getSource('uploaded-geometry') as GeoJSONSource | undefined;
+		source?.setData(data);
+	}
+
+	function updateUploadedGeometryStyles() {
+		if (!map) return;
+		const activeId = activeUploadedFeatureId ?? '';
+		const hoverId = hoveredUploadedFeatureId ?? '';
+
+		if (map.getLayer('uploaded-geometry-fill')) {
+			map.setPaintProperty('uploaded-geometry-fill', 'fill-color', [
+				'case',
+				['==', ['get', '__upload_id'], activeId],
+				'#dc2626',
+				['==', ['get', '__upload_id'], hoverId],
+				'#2563eb',
+				'#2563eb'
+			]);
+			map.setPaintProperty('uploaded-geometry-fill', 'fill-opacity', [
+				'case',
+				['==', ['get', '__upload_id'], activeId],
+				0.28,
+				['==', ['get', '__upload_id'], hoverId],
+				0.22,
+				0.12
+			]);
+		}
+
+		if (map.getLayer('uploaded-geometry-line')) {
+			map.setPaintProperty('uploaded-geometry-line', 'line-color', [
+				'case',
+				['==', ['get', '__upload_id'], activeId],
+				'#dc2626',
+				['==', ['get', '__upload_id'], hoverId],
+				'#2563eb',
+				'#1d4ed8'
+			]);
+			map.setPaintProperty('uploaded-geometry-line', 'line-width', [
+				'case',
+				['==', ['get', '__upload_id'], activeId],
+				4,
+				['==', ['get', '__upload_id'], hoverId],
+				3,
+				2
+			]);
+		}
+
+		if (map.getLayer('uploaded-geometry-point')) {
+			map.setPaintProperty('uploaded-geometry-point', 'circle-color', [
+				'case',
+				['==', ['get', '__upload_id'], activeId],
+				'#dc2626',
+				['==', ['get', '__upload_id'], hoverId],
+				'#2563eb',
+				'#1d4ed8'
+			]);
+			map.setPaintProperty('uploaded-geometry-point', 'circle-radius', [
+				'case',
+				['==', ['get', '__upload_id'], activeId],
+				8,
+				['==', ['get', '__upload_id'], hoverId],
+				7,
+				6
+			]);
+		}
+	}
+
+	function extendBoundsFromGeometry(bounds: maplibregl.LngLatBounds, geometry: any) {
+		if (!geometry?.type) return;
+		if (geometry.type === 'Point') {
+			bounds.extend(geometry.coordinates as [number, number]);
+		} else if (geometry.type === 'MultiPoint' || geometry.type === 'LineString') {
+			for (const c of geometry.coordinates) bounds.extend(c as [number, number]);
+		} else if (geometry.type === 'MultiLineString' || geometry.type === 'Polygon') {
+			for (const line of geometry.coordinates) {
+				for (const c of line) bounds.extend(c as [number, number]);
+			}
+		} else if (geometry.type === 'MultiPolygon') {
+			for (const polygon of geometry.coordinates) {
+				for (const ring of polygon) {
+					for (const c of ring) bounds.extend(c as [number, number]);
+				}
+			}
+		}
+	}
+
+	function zoomToUploadedFeature(uploadedFeature: { feature: any }) {
+		if (!map || !uploadedFeature?.feature?.geometry) return;
+		const bounds = new maplibregl.LngLatBounds();
+		extendBoundsFromGeometry(bounds, uploadedFeature.feature.geometry);
+		if (!bounds.isEmpty()) {
+			const sidebarWidth = sidebarOpen ? 340 : 0;
+			map.fitBounds(bounds, {
+				padding: { top: 80, bottom: 80, left: sidebarWidth + 40, right: 80 },
+				maxZoom: 14,
+				duration: 600
+			});
+		}
+	}
+
+	function featureDisplayName(feature: any, index: number): string {
+		const props = feature?.properties ?? {};
+		return (
+			props.name ??
+			props.title ??
+			props.site_name ??
+			props.id ??
+			`Feature ${index + 1}`
+		);
 	}
 
 	// --- Persistent click marker ---
@@ -174,6 +290,9 @@
 	async function searchAtPoint(lng: number, lat: number) {
 		loading = true;
 		error = null;
+		activeUploadedFeatureId = null;
+		hoveredUploadedFeatureId = null;
+		updateUploadedGeometryStyles();
 		clickInfo = { lng, lat };
 		showRadar(lng, lat, radiusKm);
 
@@ -215,6 +334,31 @@
 					<span style="font-size:13px;font-weight:700;line-height:1.3;color:#111827">${props.name ?? 'Unnamed area'}</span>
 				</div>
 				<table style="border-collapse:collapse;width:100%">${rows}</table>
+			</div>`;
+	}
+
+	function buildUploadedPopupHTML(feature: any): string {
+		const props = feature?.properties ?? {};
+		const rows = Object.entries(props)
+			.filter(([k]) => !k.startsWith('__'))
+			.map(([k, v]) => {
+				const label = k.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+				const value = String(v ?? '—');
+				return `<tr>
+					<td style="padding:3px 10px 3px 0;color:#6b7280;white-space:nowrap;font-size:11px;text-transform:uppercase;letter-spacing:0.04em">${label}</td>
+					<td style="padding:3px 0;font-size:12px;font-weight:500;color:#111827">${value}</td>
+				</tr>`;
+			})
+			.join('');
+
+		const title = props.__upload_name ?? props.name ?? 'Uploaded feature';
+		return `
+			<div style="font-family:system-ui,sans-serif;padding:2px 0;color:#111827">
+				<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+					<span style="width:10px;height:10px;border-radius:50%;background:#1d4ed8;flex-shrink:0;display:inline-block"></span>
+					<span style="font-size:13px;font-weight:700;line-height:1.3;color:#111827">${title}</span>
+				</div>
+				<table style="border-collapse:collapse;width:100%">${rows || '<tr><td style="font-size:12px;color:#6b7280">No properties</td></tr>'}</table>
 			</div>`;
 	}
 
@@ -291,13 +435,71 @@
 		error = null;
 		clickInfo = null;
 		features = [];
-		geojsonFileName = null;
+		uploadedFeatures = [];
+		activeUploadedFeatureId = null;
+		hoveredUploadedFeatureId = null;
 		visibleAreaTypes = {};
 		clearSelection();
 		removeRadar();
 		clickMarker?.remove();
 		clickMarker = null;
 		setMapData([]);
+		setUploadedGeometryData({ type: 'FeatureCollection', features: [] });
+		updateUploadedGeometryStyles();
+	}
+
+	async function searchUploadedFeature(uploadedFeature: { id: string; name: string; feature: any }) {
+		if (!uploadedFeature) {
+			error = 'Upload a GeoJSON feature first';
+			return;
+		}
+
+		loading = true;
+		error = null;
+		activeUploadedFeatureId = uploadedFeature.id;
+		updateUploadedGeometryStyles();
+		zoomToUploadedFeature(uploadedFeature);
+		removeRadar();
+		clickInfo = null;
+
+		try {
+			const data = await fetchNearestProtectedAreasByGeoJSON(uploadedFeature.feature, radiusKm);
+			features = data.features;
+			expandedGroups = {};
+			setMapData(data.features);
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Unknown error while querying backend';
+			features = [];
+			setMapData([]);
+		} finally {
+			loading = false;
+		}
+	}
+
+	function setHoveredUploadedFeature(featureId: string | null) {
+		hoveredUploadedFeatureId = featureId;
+		updateUploadedGeometryStyles();
+	}
+
+	function handleUploadedGeometryClick(event: any) {
+		event.preventDefault();
+		const feature = event.features?.[0];
+		if (!feature || !map) return;
+
+		const featureId = feature.properties?.__upload_id;
+		if (featureId) {
+			activeUploadedFeatureId = String(featureId);
+			updateUploadedGeometryStyles();
+		}
+
+		activePopup?.remove();
+		activePopup = new maplibregl.Popup({ closeButton: true, maxWidth: '300px', className: 'habitat-popup' })
+			.setLngLat(event.lngLat)
+			.setHTML(buildUploadedPopupHTML(feature))
+			.addTo(map);
+		activePopup.on('close', () => {
+			activePopup = null;
+		});
 	}
 
 	function toggleAreaType(areaType: string) {
@@ -349,35 +551,56 @@
 		try {
 			const text = await file.text();
 			const geojson = JSON.parse(text);
+			let displayGeoJSON: any;
+			let featureList: any[] = [];
 
 			if (geojson.type === 'FeatureCollection' && Array.isArray(geojson.features)) {
-				features = geojson.features;
-				setMapData(geojson.features);
+				featureList = geojson.features;
 			} else if (geojson.type === 'Feature') {
-				features = [geojson];
-				setMapData([geojson]);
+				featureList = [geojson];
+			} else if (geojson.type && geojson.coordinates) {
+				featureList = [{ type: 'Feature', properties: {}, geometry: geojson }];
 			} else {
-				throw new Error('File must be a GeoJSON FeatureCollection or Feature');
+				throw new Error('File must be a GeoJSON FeatureCollection, Feature, or Geometry');
 			}
 
-			geojsonFileName = file.name;
+			const normalized = featureList
+				.filter((f) => f && f.geometry)
+				.map((feature, index) => {
+					const id = String(feature.id ?? `upload-${index + 1}`);
+					const name = featureDisplayName(feature, index);
+					return {
+						id,
+						name,
+						feature,
+						displayFeature: {
+							type: 'Feature',
+							properties: { ...(feature.properties ?? {}), __upload_id: id, __upload_name: name },
+							geometry: feature.geometry
+						}
+					};
+				});
+
+			if (normalized.length === 0) {
+				throw new Error('No valid GeoJSON features with geometry found');
+			}
+
+			displayGeoJSON = {
+				type: 'FeatureCollection',
+				features: normalized.map((n) => n.displayFeature)
+			};
+
+			uploadedFeatures = normalized.map((n) => ({ id: n.id, name: n.name, feature: n.feature }));
+			activeUploadedFeatureId = null;
+			hoveredUploadedFeatureId = null;
+			setUploadedGeometryData(displayGeoJSON);
+			updateUploadedGeometryStyles();
 			error = null;
 
-			if (map && features.length > 0) {
+			if (map && displayGeoJSON.features.length > 0) {
 				const bounds = new maplibregl.LngLatBounds();
-				for (const f of features) {
-					const geom = f.geometry;
-					if (geom.type === 'Point') {
-						bounds.extend(geom.coordinates as [number, number]);
-					} else if (geom.type === 'Polygon' || geom.type === 'MultiPolygon') {
-						const coords =
-							geom.type === 'Polygon'
-								? geom.coordinates.flat()
-								: geom.coordinates.flat(2);
-						for (const c of coords) {
-							bounds.extend(c as [number, number]);
-						}
-					}
+				for (const f of displayGeoJSON.features) {
+					extendBoundsFromGeometry(bounds, f.geometry);
 				}
 				if (!bounds.isEmpty()) {
 					map.fitBounds(bounds, { padding: 60, maxZoom: 12 });
@@ -385,6 +608,11 @@
 			}
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to parse GeoJSON file';
+			uploadedFeatures = [];
+			activeUploadedFeatureId = null;
+			hoveredUploadedFeatureId = null;
+			setUploadedGeometryData({ type: 'FeatureCollection', features: [] });
+			updateUploadedGeometryStyles();
 		}
 	}
 
@@ -400,6 +628,74 @@
 
 		map.on('load', () => {
 			if (!map) return;
+
+			map.addSource('uploaded-geometry', {
+				type: 'geojson',
+				data: { type: 'FeatureCollection', features: [] }
+			});
+
+			map.addLayer({
+				id: 'uploaded-geometry-fill',
+				type: 'fill',
+				source: 'uploaded-geometry',
+				filter: ['==', ['geometry-type'], 'Polygon'],
+				paint: {
+					'fill-color': '#2563eb',
+					'fill-opacity': 0.18
+				}
+			});
+
+			map.addLayer({
+				id: 'uploaded-geometry-line',
+				type: 'line',
+				source: 'uploaded-geometry',
+				filter: [
+					'any',
+					['==', ['geometry-type'], 'Polygon'],
+					['==', ['geometry-type'], 'LineString']
+				],
+				paint: {
+					'line-color': '#1d4ed8',
+					'line-width': 2,
+					'line-opacity': 0.9
+				}
+			});
+
+			map.addLayer({
+				id: 'uploaded-geometry-point',
+				type: 'circle',
+				source: 'uploaded-geometry',
+				filter: ['==', ['geometry-type'], 'Point'],
+				paint: {
+					'circle-radius': 6,
+					'circle-color': '#1d4ed8',
+					'circle-stroke-color': '#ffffff',
+					'circle-stroke-width': 1.5
+				}
+			});
+
+			map.on('click', 'uploaded-geometry-fill', handleUploadedGeometryClick);
+			map.on('click', 'uploaded-geometry-line', handleUploadedGeometryClick);
+			map.on('click', 'uploaded-geometry-point', handleUploadedGeometryClick);
+
+			map.on('mouseenter', 'uploaded-geometry-fill', () => {
+				map!.getCanvas().style.cursor = 'pointer';
+			});
+			map.on('mouseleave', 'uploaded-geometry-fill', () => {
+				map!.getCanvas().style.cursor = '';
+			});
+			map.on('mouseenter', 'uploaded-geometry-line', () => {
+				map!.getCanvas().style.cursor = 'pointer';
+			});
+			map.on('mouseleave', 'uploaded-geometry-line', () => {
+				map!.getCanvas().style.cursor = '';
+			});
+			map.on('mouseenter', 'uploaded-geometry-point', () => {
+				map!.getCanvas().style.cursor = 'pointer';
+			});
+			map.on('mouseleave', 'uploaded-geometry-point', () => {
+				map!.getCanvas().style.cursor = '';
+			});
 
 			map.addSource('protected-areas', {
 				type: 'geojson',
@@ -555,7 +851,7 @@
 					</div>
 				{/if}
 
-				{#if features.length > 0 || geojsonFileName}
+				{#if features.length > 0 || uploadedFeatures.length > 0}
 					<div class="mt-2 flex gap-1.5">
 						<button class="btn btn-xs btn-outline" onclick={resetAll}>Clear all</button>
 					</div>
@@ -578,12 +874,12 @@
 					<svg xmlns="http://www.w3.org/2000/svg" class="mb-1 h-6 w-6 text-base-content/40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
 					</svg>
-					{#if geojsonFileName}
-						<span class="text-xs font-medium text-primary">{geojsonFileName}</span>
-						<span class="text-[10px] text-base-content/50">Drop another to replace</span>
-					{:else}
+					{#if uploadedFeatures.length === 0}
 						<span class="text-xs font-medium text-base-content/70">Drop .geojson file here</span>
 						<span class="text-[10px] text-base-content/50">or click to browse</span>
+					{:else}
+						<span class="text-xs font-medium text-primary">{uploadedFeatures.length} uploaded feature{uploadedFeatures.length > 1 ? 's' : ''}</span>
+						<span class="text-[10px] text-base-content/50">Drop another file to replace</span>
 					{/if}
 				</div>
 				<input
@@ -593,6 +889,26 @@
 					class="hidden"
 					onchange={handleFileInput}
 				/>
+				{#if uploadedFeatures.length > 0}
+					<div class="mt-2 space-y-1.5">
+						{#each uploadedFeatures as uf}
+							<button
+								type="button"
+								class="flex w-full items-center justify-between gap-2 rounded-md border px-2 py-1.5 text-left text-xs transition-colors
+									{activeUploadedFeatureId === uf.id ? 'border-error/60 bg-error/10' : 'border-base-300 hover:border-primary/60 hover:bg-base-200/60'}"
+								onmouseenter={() => setHoveredUploadedFeature(uf.id)}
+								onmouseleave={() => setHoveredUploadedFeature(null)}
+								onclick={() => void searchUploadedFeature(uf)}
+								disabled={loading}
+							>
+								<span class="truncate font-medium">{uf.name}</span>
+								<svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+									<path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35m1.85-5.15a7 7 0 11-14 0 7 7 0 0114 0z" />
+								</svg>
+							</button>
+						{/each}
+					</div>
+				{/if}
 			</div>
 
 			<!-- Status messages -->

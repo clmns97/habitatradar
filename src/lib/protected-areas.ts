@@ -17,14 +17,24 @@ export async function fetchNearestProtectedAreas(
 	lat: number,
 	radiusKm: number
 ): Promise<ProtectedAreaResponse> {
+	return fetchNearestProtectedAreasByGeoJSON(
+		{
+			type: 'Point',
+			coordinates: [lng, lat]
+		},
+		radiusKm
+	);
+}
+
+export async function fetchNearestProtectedAreasByGeoJSON(
+	geojson: FeatureCollection<Geometry, GeoJsonProperties> | Feature<Geometry, GeoJsonProperties> | Geometry,
+	radiusKm: number
+): Promise<ProtectedAreaResponse> {
 	const response = await fetch(`${API_URL}/api/nearest-protected-areas`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({
-			geojson: {
-				type: 'Point',
-				coordinates: [lng, lat]
-			},
+			geojson,
 			radius_km: radiusKm
 		})
 	});
