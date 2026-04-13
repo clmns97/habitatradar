@@ -12,6 +12,7 @@
 		groupByAreaType,
 		type ProtectedAreaFeature
 	} from '$lib/protected-areas';
+	import { forEachPosition, parseUploadedGeoJSON, type UploadedFeature } from '$lib/uploaded-geojson';
 
 	let mapContainer: HTMLDivElement;
 	let map: Map | null = null;
@@ -27,7 +28,7 @@
 	let features = $state<ProtectedAreaFeature[]>([]);
 	let sidebarOpen = $state(true);
 	let draggingOver = $state(false);
-	let uploadedFeatures = $state<Array<{ id: string; name: string; feature: any }>>([]);
+	let uploadedFeatures = $state<UploadedFeature[]>([]);
 	let activeUploadedFeatureId = $state<string | null>(null);
 	let hoveredUploadedFeatureId = $state<string | null>(null);
 	let selectedFeature = $state<ProtectedAreaFeature | null>(null);
@@ -166,22 +167,8 @@
 	}
 
 	function extendBoundsFromGeometry(bounds: maplibregl.LngLatBounds, geometry: any) {
-		if (!geometry?.type) return;
-		if (geometry.type === 'Point') {
-			bounds.extend(geometry.coordinates as [number, number]);
-		} else if (geometry.type === 'MultiPoint' || geometry.type === 'LineString') {
-			for (const c of geometry.coordinates) bounds.extend(c as [number, number]);
-		} else if (geometry.type === 'MultiLineString' || geometry.type === 'Polygon') {
-			for (const line of geometry.coordinates) {
-				for (const c of line) bounds.extend(c as [number, number]);
-			}
-		} else if (geometry.type === 'MultiPolygon') {
-			for (const polygon of geometry.coordinates) {
-				for (const ring of polygon) {
-					for (const c of ring) bounds.extend(c as [number, number]);
-				}
-			}
-		}
+		if (!geometry) return;
+		forEachPosition(geometry, (position) => bounds.extend(position as [number, number]));
 	}
 
 	function zoomToUploadedFeature(uploadedFeature: { feature: any }) {
@@ -196,17 +183,6 @@
 				duration: 600
 			});
 		}
-	}
-
-	function featureDisplayName(feature: any, index: number): string {
-		const props = feature?.properties ?? {};
-		return (
-			props.name ??
-			props.title ??
-			props.site_name ??
-			props.id ??
-			`Feature ${index + 1}`
-		);
 	}
 
 	// --- Persistent click marker ---
@@ -448,7 +424,7 @@
 		updateUploadedGeometryStyles();
 	}
 
-	async function searchUploadedFeature(uploadedFeature: { id: string; name: string; feature: any }) {
+	async function searchUploadedFeature(uploadedFeature: UploadedFeature) {
 		if (!uploadedFeature) {
 			error = 'Upload a GeoJSON feature first';
 			return;
@@ -550,47 +526,10 @@
 	async function loadGeoJSONFile(file: File) {
 		try {
 			const text = await file.text();
-			const geojson = JSON.parse(text);
-			let displayGeoJSON: any;
-			let featureList: any[] = [];
+			const geojson = JSON.parse(text) as unknown;
+			const { uploadedFeatures: parsedFeatures, displayGeoJSON } = parseUploadedGeoJSON(geojson);
 
-			if (geojson.type === 'FeatureCollection' && Array.isArray(geojson.features)) {
-				featureList = geojson.features;
-			} else if (geojson.type === 'Feature') {
-				featureList = [geojson];
-			} else if (geojson.type && geojson.coordinates) {
-				featureList = [{ type: 'Feature', properties: {}, geometry: geojson }];
-			} else {
-				throw new Error('File must be a GeoJSON FeatureCollection, Feature, or Geometry');
-			}
-
-			const normalized = featureList
-				.filter((f) => f && f.geometry)
-				.map((feature, index) => {
-					const id = String(feature.id ?? `upload-${index + 1}`);
-					const name = featureDisplayName(feature, index);
-					return {
-						id,
-						name,
-						feature,
-						displayFeature: {
-							type: 'Feature',
-							properties: { ...(feature.properties ?? {}), __upload_id: id, __upload_name: name },
-							geometry: feature.geometry
-						}
-					};
-				});
-
-			if (normalized.length === 0) {
-				throw new Error('No valid GeoJSON features with geometry found');
-			}
-
-			displayGeoJSON = {
-				type: 'FeatureCollection',
-				features: normalized.map((n) => n.displayFeature)
-			};
-
-			uploadedFeatures = normalized.map((n) => ({ id: n.id, name: n.name, feature: n.feature }));
+			uploadedFeatures = parsedFeatures;
 			activeUploadedFeatureId = null;
 			hoveredUploadedFeatureId = null;
 			setUploadedGeometryData(displayGeoJSON);
