@@ -30,5 +30,6 @@ jobs:
             --source backend \
             --region ${{ secrets.GCP_REGION }} \
             --project ${{ secrets.GCP_PROJECT_ID }} \
+            --quiet \
             --allow-unauthenticated \
             --set-env-vars FRONTEND_ORIGIN=${{ secrets.FRONTEND_ORIGIN }}
