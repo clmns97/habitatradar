@@ -3,21 +3,30 @@
 HabitatRadar is a map-based web app that shows nearby protected areas.
 
 - Frontend: SvelteKit, Vite, Tailwind CSS, DaisyUI, MapLibre GL
-- Backend: FastAPI with PostGIS-style spatial queries via PostgreSQL
-- Hosting: GitHub Pages (frontend) + Google Cloud Run (backend)
+- Backend: FastAPI with PostGIS spatial queries via PostgreSQL/PostGIS
+- Hosting: GitHub Pages (frontend) + a self-hosted server (backend + DB)
 
-## Live URLs
+## Architecture
 
-- Frontend: `https://REDACTED_ORIGIN/habitatradar/`
-- Backend health: `https://REDACTED_HOST/health`
+- The **frontend** is a static SvelteKit build published to GitHub Pages.
+- The **backend** (FastAPI) runs on a self-hosted server behind Caddy (HTTPS),
+  defined in `deploy/docker-compose.yml`. It talks to a shared PostGIS database
+  over a private Docker network using a read-only role.
+- A small **Cloudflare Worker** (`deploy/cloudflare-worker/`) reverse-proxies the
+  public API URL to the backend, so the origin host is never referenced by the
+  frontend. Its config lives in Worker secrets, not in this repo.
+- The **ETL** (`backend/etl/refresh_wfs.py`) refreshes protected-area tables from
+  the BfN WFS and runs in GitHub Actions, reaching the database over Tailscale.
 
 ## Project structure
 
 - `src/`: SvelteKit frontend
 - `static/`: static assets
 - `backend/`: FastAPI app, Dockerfile, Python dependencies
+- `backend/etl/`: WFS loader + its Docker image
+- `deploy/`: server compose stack, Caddyfile, Cloudflare Worker
 - `.github/workflows/deploy-frontend.yml`: deploy frontend to GitHub Pages
-- `.github/workflows/deploy-backend.yml`: deploy backend to Cloud Run
+- `.github/workflows/etl.yml`: scheduled data refresh
 
 ## Local development
 
@@ -31,21 +40,15 @@ HabitatRadar is a map-based web app that shows nearby protected areas.
 
 ```bash
 bun install
-cp .env.example .env
+cp .env.example .env   # set VITE_API_URL to your backend/API URL
 bun run dev
-```
-
-Set `VITE_API_URL` in `.env` to your backend URL, for example:
-
-```bash
-VITE_API_URL="http://localhost:8000"
 ```
 
 ### Backend
 
 ```bash
 cp backend/.env.example backend/.env
-docker-compose up --build
+docker compose up --build
 ```
 
 Backend runs on `http://localhost:8000`.
@@ -55,6 +58,7 @@ Backend runs on `http://localhost:8000`.
 ```bash
 bun run check
 bun run build
+bun run test
 python3 -m compileall backend
 ```
 
@@ -67,10 +71,7 @@ Example request:
 
 ```json
 {
-  "geojson": {
-    "type": "Point",
-    "coordinates": [13.405, 52.52]
-  },
+  "geojson": { "type": "Point", "coordinates": [13.405, 52.52] },
   "radius_km": 10
 }
 ```
@@ -79,60 +80,39 @@ Example request:
 
 ### Frontend (GitHub Pages)
 
-The frontend workflow uses `VITE_API_URL` during build and publishes the `build/` output as a Pages artifact.
+The frontend workflow uses `VITE_API_URL` during build and publishes `build/` as a
+Pages artifact. Required secret: `VITE_API_URL`.
 
-Required GitHub Actions secret:
+### Backend (self-hosted)
 
-- `VITE_API_URL`
+Copy `deploy/.env.example` to `deploy/.env` on the server, fill in the values, then:
 
-### Backend (Google Cloud Run)
+```bash
+cd deploy && docker compose up -d --build
+```
 
-The backend workflow deploys from source using `gcloud run deploy --source backend`.
+### Cloudflare Worker (API proxy)
 
-Required GitHub Actions secrets:
-
-- `GCP_CREDENTIALS_JSON`
-- `GCP_PROJECT_ID`
-- `GCP_REGION`
-- `CLOUD_RUN_SERVICE`
-- `FRONTEND_ORIGIN`
-- `DATABASE_URL`
-
-Service account typically needs these IAM roles on the project:
-
-- `roles/run.admin`
-- `roles/iam.serviceAccountUser`
-- `roles/storage.admin`
-- `roles/artifactregistry.admin`
-- `roles/cloudbuild.builds.editor`
-
-Required Google Cloud APIs:
-
-- `run.googleapis.com`
-- `artifactregistry.googleapis.com`
-- `cloudbuild.googleapis.com`
+```bash
+cd deploy/cloudflare-worker
+npx wrangler secret put BACKEND          # origin base URL
+npx wrangler secret put ALLOWED_ORIGIN   # frontend origin
+npx wrangler deploy
+```
 
 ## Data refresh (ETL)
 
-Protected-area tables are loaded from the [BfN WFS service](https://geodienste.bfn.de/ogc/wfs/schutzgebiet)
-by `backend/etl/refresh_wfs.py` and refreshed automatically by
-`.github/workflows/etl.yml`, which runs every Sunday at 03:00 UTC (and can be
-triggered manually via *workflow_dispatch*).
+Protected-area tables are loaded from the
+[BfN WFS service](https://geodienste.bfn.de/ogc/wfs/schutzgebiet) by
+`backend/etl/refresh_wfs.py`, refreshed by `.github/workflows/etl.yml` every
+Sunday at 03:00 UTC (and on demand via *workflow_dispatch*). The runner joins the
+tailnet to reach the database. For each layer the job loads into a staging table
+with `ogr2ogr` (EPSG:3035, geometry column `geom`), verifies rows, then atomically
+swaps it into the live table — so the API keeps serving the previous data until
+the swap commits.
 
-For each of the nine layers the job loads the data into a staging table with
-`ogr2ogr` (reprojected to EPSG:3035, geometry column `geom`, FID column `id`),
-verifies it received rows, then atomically swaps it into the live table — so the
-API keeps serving the previous data until the swap commits.
-
-Required GitHub Actions secret:
-
-- `IMPORT_DATABASE_URL` — Postgres connection URL for the write/ETL role. Use a
-  **direct** (non-pooled) Neon endpoint; a `-pooler` host is stripped
-  automatically.
-
-Optional:
-
-- `WFS_URL` — overrides the default BfN WFS endpoint.
+Secrets: `IMPORT_DATABASE_URL` (write-role DSN), `TS_OAUTH_CLIENT_ID` /
+`TS_OAUTH_SECRET` (Tailscale), optional `WFS_URL`.
 
 Run it locally against your own database:
 

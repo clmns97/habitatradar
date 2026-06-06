@@ -35,7 +35,7 @@ jobs:
 
       - name: Refresh protected-area tables from WFS
         env:
-          # postgresql://REDACTED_ROLE:***@REDACTED_HOST:5432/habitatradar
+          # Write-role DSN to the tailnet Postgres (kept entirely in the secret).
           IMPORT_DATABASE_URL: ${{ secrets.IMPORT_DATABASE_URL }}
           WFS_URL: ${{ secrets.WFS_URL }}
         run: python backend/etl/refresh_wfs.py

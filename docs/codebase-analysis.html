@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>HabitatRadar — Codebase Analysis Tracker</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1e222b;
+    --border: #2a2f3a;
+    --text: #e6e9ef;
+    --muted: #9aa3b2;
+    --accent: #4f9dff;
+    --green: #3fb950;
+    --amber: #d29922;
+    --red: #f85149;
+    --purple: #a371f7;
+    --shadow: 0 1px 3px rgba(0,0,0,.4);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    padding: 24px 28px 18px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, #171a21, #0f1115);
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { margin: 0 0 4px; font-size: 22px; }
+  header p { margin: 0; color: var(--muted); font-size: 13px; }
+  .toolbar {
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+    margin-top: 14px;
+  }
+  .toolbar input[type="search"] {
+    flex: 1; min-width: 200px;
+    background: var(--panel-2); border: 1px solid var(--border);
+    color: var(--text); padding: 8px 12px; border-radius: 8px; font-size: 14px;
+  }
+  .filters { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip {
+    background: var(--panel-2); border: 1px solid var(--border);
+    color: var(--muted); padding: 6px 11px; border-radius: 999px;
+    cursor: pointer; font-size: 13px; user-select: none;
+  }
+  .chip.active { color: var(--text); border-color: var(--accent); background: #1d2735; }
+  .stats { display: flex; gap: 18px; margin-top: 14px; flex-wrap: wrap; }
+  .stat { font-size: 13px; color: var(--muted); }
+  .stat b { color: var(--text); font-size: 16px; }
+  .progress {
+    height: 8px; background: var(--panel-2); border-radius: 999px;
+    overflow: hidden; margin-top: 10px; border: 1px solid var(--border);
+  }
+  .progress > div { height: 100%; background: var(--green); width: 0%; transition: width .3s; }
+
+  main { padding: 22px 28px 80px; max-width: 1100px; margin: 0 auto; }
+  .group-title {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .07em;
+    color: var(--muted); margin: 26px 0 10px;
+  }
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 16px; margin-bottom: 10px;
+    box-shadow: var(--shadow); border-left: 4px solid var(--border);
+  }
+  .card[data-sev="critical"] { border-left-color: var(--red); }
+  .card[data-sev="high"]     { border-left-color: var(--amber); }
+  .card[data-sev="medium"]   { border-left-color: var(--accent); }
+  .card[data-sev="low"]      { border-left-color: var(--muted); }
+  .card.done { opacity: .55; }
+  .card-head { display: flex; align-items: flex-start; gap: 12px; }
+  .card-head h3 { margin: 0; font-size: 15px; flex: 1; }
+  .card.done h3 { text-decoration: line-through; }
+  .badges { display: flex; gap: 6px; flex-wrap: wrap; }
+  .badge {
+    font-size: 11px; padding: 2px 8px; border-radius: 999px;
+    border: 1px solid var(--border); color: var(--muted); white-space: nowrap;
+  }
+  .badge.sev-critical { color: var(--red); border-color: var(--red); }
+  .badge.sev-high     { color: var(--amber); border-color: var(--amber); }
+  .badge.sev-medium   { color: var(--accent); border-color: var(--accent); }
+  .badge.sev-low      { color: var(--muted); }
+  .badge.cat { color: var(--purple); border-color: #3a2f4a; }
+  .badge.verdict-false-positive { color: var(--green); border-color: var(--green); }
+  .badge.verdict-confirmed { color: var(--red); border-color: var(--red); }
+  .badge.verdict-needs-review { color: var(--amber); border-color: var(--amber); }
+  .card p.desc { margin: 10px 0 0; color: var(--muted); font-size: 13.5px; }
+  .card .files { margin-top: 8px; font-size: 12px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .card .files code { background: var(--panel-2); padding: 1px 6px; border-radius: 5px; }
+  .card-foot { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+  select.status {
+    background: var(--panel-2); border: 1px solid var(--border);
+    color: var(--text); padding: 5px 9px; border-radius: 7px; font-size: 13px;
+  }
+  textarea.notes {
+    width: 100%; margin-top: 10px; min-height: 0; height: 34px;
+    background: var(--panel-2); border: 1px solid var(--border);
+    color: var(--text); border-radius: 7px; padding: 8px; font-size: 13px;
+    resize: vertical; font-family: inherit;
+  }
+  .empty { text-align: center; color: var(--muted); padding: 60px 20px; }
+  footer { text-align: center; color: var(--muted); font-size: 12px; padding: 20px; }
+  .reset { background: none; border: 1px solid var(--border); color: var(--muted);
+    padding: 6px 11px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>HabitatRadar — Codebase Analysis Tracker</h1>
+  <p>Findings from automated analysis. Status & notes persist in your browser (localStorage).</p>
+  <div class="toolbar">
+    <input type="search" id="search" placeholder="Search findings…" />
+    <div class="filters" id="sevFilters">
+      <span class="chip active" data-sev="all">All severities</span>
+      <span class="chip" data-sev="critical">Critical</span>
+      <span class="chip" data-sev="high">High</span>
+      <span class="chip" data-sev="medium">Medium</span>
+      <span class="chip" data-sev="low">Low</span>
+    </div>
+    <button class="reset" id="reset">Reset all status</button>
+  </div>
+  <div class="stats" id="stats"></div>
+  <div class="progress"><div id="progressBar"></div></div>
+</header>
+
+<main id="list"></main>
+
+<footer>Edit the <code>FINDINGS</code> array in this file's source to add or change items.</footer>
+
+<script>
+/* ============================================================
+   FINDINGS — paste analysis results here, one object per item.
+   severity: "critical" | "high" | "medium" | "low"
+   category: free text (e.g. "Security", "Performance", "DX")
+   files:    array of path strings (optional)
+   ============================================================ */
+const FINDINGS = [
+  /* ---- Analysis run: "Security Analysis" — 1 High ---- */
+  {
+    id: "sec-xss-popups",
+    title: "XSS via unescaped popup HTML  ✅ FIXED",
+    severity: "critical", category: "Security",
+    verdict: "confirmed",
+    description:
+      "FIXED 2026-06-06. buildPopupHTML and buildUploadedPopupHTML interpolated untrusted feature property " +
+      "keys AND values straight into HTML strings passed to MapLibre's setHTML() (sinks at lines ~360, ~477, ~694). " +
+      "buildUploadedPopupHTML was the exploitable one: properties come from a user-uploaded GeoJSON file, so a value " +
+      "like '<img src=x onerror=...>' executed on popup open (e.g. opening a GeoJSON shared by someone else). " +
+      "buildPopupHTML used BfN/WFS backend data — lower risk but still unescaped (defense-in-depth). " +
+      "FIX: added an escapeHtml() helper and applied it to every interpolated label, value, name, and title (5 sites). " +
+      "The two static innerHTML sites (radar/marker, lines 195/246) contain no user data — left as-is. " +
+      "REGRESSION TEST ADDED 2026-06-06: escapeHtml + buildUploadedPopupHTML extracted to src/lib/popup-html.ts and " +
+      "covered by src/lib/popup-html.test.ts (malicious key/value/title cases). svelte-check + 26 tests pass.",
+    files: ["src/routes/+page.svelte"]
+  },
+
+  /* ---- Analysis run: "Actionable Suggestions" ----
+     CRITICAL "Fix Security Issues" -> the XSS above (now fixed).
+     HIGH "Split Large Files" -> large-page-svelte below.
+     MEDIUM "Add Test Coverage" -> new finding:                              */
+  {
+    id: "test-coverage-zero",
+    title: "No automated tests (0 files, 0%)  🟡 IN PROGRESS — 58 tests now",
+    severity: "medium", category: "Testing",
+    verdict: "confirmed",
+    description:
+      "FRONTEND (Vitest, 26 tests): wired up in vite.config.ts; run with `bun run test` / `test:watch`. " +
+      "src/lib/uploaded-geojson.test.ts (parseUploadedGeoJSON input shapes, naming priority, id fallback, invalid input, " +
+      "forEachPosition for every geometry type) + src/lib/popup-html.test.ts (escapeHtml + buildUploadedPopupHTML XSS " +
+      "regression). escapeHtml + buildUploadedPopupHTML were extracted to src/lib/popup-html.ts to make them testable. " +
+      "BACKEND (pytest, 32 tests, 2026-06-06): config in backend/pytest.ini (pythonpath=.), backend/conftest.py sets a " +
+      "dummy DATABASE_URL so the import-time engine doesn't block tests, deps in backend/requirements-dev.txt. " +
+      "Run with `.venv/bin/python3.13 -m pytest` from backend/. Covers test_geojson_service.py (CRS detect/guess, " +
+      "flatten_coordinates, transform round-trip + no-mutate + structure), test_services.py (extract_geometry), " +
+      "test_refresh_wfs.py (parse_connection: driver-suffix strip, neon pooler normalisation, sslmode, unquoting, missing-env exit). " +
+      "REMAINING: (1) buildPopupHTML still in +page.svelte — extract + test during the refactor; " +
+      "(2) tests not yet wired into CI (.github/workflows); (3) DB-touching services (query_single_table) untested by design.",
+    files: ["src/lib/*.test.ts", "backend/tests/", "backend/pytest.ini", "backend/conftest.py", "backend/requirements-dev.txt"]
+  },
+
+  /* ---- Analysis run: "1 Large File" (files with 15+ functions) ---- */
+  {
+    id: "large-page-svelte",
+    title: "+page.svelte is too large & complex (1100 lines, 45 functions, complexity 93)",
+    severity: "medium", category: "Large files / complexity",
+    verdict: "confirmed",
+    description:
+      "Also the #1 high-complexity file: complexity score 93 — over 3x the >30 threshold and far above the next files (33, 32). " +
+      "Independently corroborated by the pattern detector, which flags this same file as both a 'God Object' (15+ functions) " +
+      "and a 'Long File' (>500 lines) anti-pattern. " +
+      "The route component mixes many concerns in one file: ~728-line <script> + ~370 lines of markup. " +
+      "Functions fall into clear domains that can be extracted into src/lib modules (pure logic) or child components (UI): " +
+      "(1) Map data & styling — applyFilter, buildFillColorExpression, setMapData, setUploadedGeometryData, updateUploadedGeometryStyles, extendBoundsFromGeometry, zoomToUploadedFeature; " +
+      "(2) Radar overlay — placeClickMarker, kmToPixels, applyRadarSize, showRadar, removeRadar; " +
+      "(3) Search — searchAtPoint, searchUploadedFeature; " +
+      "(4) Popups — buildPopupHTML, buildUploadedPopupHTML, featureCentroid, showFeaturePopup; " +
+      "(5) Selection — selectFeature, clearSelection, resetAll; " +
+      "(6) Area-type filters — toggleAreaType, showAll, hideAll; " +
+      "(7) GeoJSON upload / drag-drop — handleDrag*, handleDrop, handleFileInput, loadGeoJSONFile, handleUploadedGeometryClick. " +
+      "Start with pure helpers (kmToPixels, buildPopupHTML, featureCentroid, buildFillColorExpression) — easy, testable, no Svelte coupling.",
+    files: ["src/routes/+page.svelte"]
+  },
+
+  {
+    id: "complexity-refresh-wfs",
+    title: "refresh_wfs.py high complexity (33)",
+    severity: "low", category: "Large files / complexity",
+    verdict: "needs-review",
+    description:
+      "RECOMMENDATION: leave as-is. The score is driven by NECESSARY structure — per-layer try/except so one " +
+      "bad WFS layer can't abort the others, the conditional name-column rename, and the ThreadPoolExecutor fan-out. " +
+      "The file is 208 lines, thoroughly documented, and each function has a single clear job. Refactoring would add " +
+      "indirection without reducing real complexity. Optional micro-win: the large ogr2ogr `cmd` list (lines 97-121) " +
+      "could move to a module-level constant, but it doesn't affect cyclomatic complexity.",
+    files: ["backend/etl/refresh_wfs.py"]
+  },
+  {
+    id: "complexity-uploaded-geojson",
+    title: "uploaded-geojson.ts high complexity (32)",
+    severity: "low", category: "Large files / complexity",
+    verdict: "needs-review",
+    description:
+      "RECOMMENDATION: leave as-is. Complexity is inherent to GeoJSON: forEachPosition (lines 67-92) has one branch " +
+      "per geometry type (Point/MultiPoint/LineString/Polygon/MultiLineString/MultiPolygon) and parseUploadedGeoJSON " +
+      "dispatches on the FeatureCollection/Feature/Geometry union. The explicit branches are clearer and more " +
+      "performant than a recursive coordinate-walker. Only 93 lines, no dead code, well-typed. No action needed.",
+    files: ["src/lib/uploaded-geojson.ts"]
+  },
+
+  /* ---- Analysis run: "Design Patterns & Anti-Patterns" ----
+     God Object + Long File both point at +page.svelte (folded into large-page-svelte above).
+     Factory + Observer/Event are POSITIVE patterns (informational, no action).
+     The two below are detector noise — wrong tech stack.                      */
+  {
+    id: "fp-django-signals",
+    title: "'Django Signals' pattern flagged",
+    severity: "low", category: "Pattern detector (false positives)",
+    verdict: "false-positive",
+    description:
+      "FALSE POSITIVE: this project has no Django. The backend is FastAPI (backend/main.py: `from fastapi import FastAPI`). " +
+      "The detector likely matched psycopg2.connect(...) (refresh_wfs.py:189,217) or CORS middleware against a generic " +
+      "'.connect() = signal' heuristic. No action.",
+    files: ["backend/main.py", "backend/etl/refresh_wfs.py"]
+  },
+  {
+    id: "fp-vba-god-module",
+    title: "'VBA God Module' anti-pattern flagged",
+    severity: "low", category: "Pattern detector (false positives)",
+    verdict: "false-positive",
+    description:
+      "FALSE POSITIVE: there are zero VBA files in the repo (no .bas/.cls/.frm/.vba). The detector fired on the wrong " +
+      "language. No action.",
+    files: []
+  },
+
+  /* ---- Analysis run: "10 Unused Functions" (functions not called from other files) ----
+     VERIFIED 2026-06-06: All 10 are FALSE POSITIVES. They live in a Svelte component
+     and are invoked from the template markup in the SAME file via event bindings
+     (onclick / ondrag / onchange / onmouseenter). The analyzer only checks
+     cross-file calls and does not understand Svelte template bindings.        */
+  {
+    id: "unused-resetAll",
+    title: "resetAll() flagged as unused",
+    severity: "low", category: "Unused functions (false positives)",
+    verdict: "false-positive",
+    description: "Used in template: onclick={resetAll} (line 795). Reachable, keep.",
+    files: ["src/routes/+page.svelte:410", "src/routes/+page.svelte:795"]
+  },
+  {
+    id: "unused-searchUploadedFeature",
+    title: "searchUploadedFeature() flagged as unused",
+    severity: "low", category: "Unused functions (false positives)",
+    verdict: "false-positive",
+    description: "Used in template: onclick={() => void searchUploadedFeature(uf)} (line 840). Reachable, keep.",
+    files: ["src/routes/+page.svelte:427", "src/routes/+page.svelte:840"]
+  },
+  {
+    id: "unused-setHoveredUploadedFeature",
+    title: "setHoveredUploadedFeature() flagged as unused",
+    severity: "low", category: "Unused functions (false positives)",
+    verdict: "false-positive",
+    description: "Used in template: onmouseenter/onmouseleave (lines 838–839). Reachable, keep.",
+    files: ["src/routes/+page.svelte:455", "src/routes/+page.svelte:838"]
+  },
+  {
+    id: "unused-toggleAreaType",
+    title: "toggleAreaType() flagged as unused",
+    severity: "low", category: "Unused functions (false positives)",
+    verdict: "false-positive",
+    description: "Used in template: onclick={() => toggleAreaType(areaType)} (line 885). Reachable, keep.",
+    files: ["src/routes/+page.svelte:481", "src/routes/+page.svelte:885"]
+  },
+  {
+    id: "unused-showAll",
+    title: "showAll() flagged as unused",
+    severity: "low", category: "Unused functions (false positives)",
+    verdict: "false-positive",
+    description: "Used in template: onclick={showAll} (line 873). Reachable, keep.",
+    files: ["src/routes/+page.svelte:486", "src/routes/+page.svelte:873"]
+  },
+  {
+    id: "unused-hideAll",
+    title: "hideAll() flagged as unused",
+    severity: "low", category: "Unused functions (false positives)",
+    verdict: "false-positive",
+    description: "Used in template: onclick={hideAll} (line 874). Reachable, keep.",
+    files: ["src/routes/+page.svelte:493", "src/routes/+page.svelte:874"]
+  },
+  {
+    id: "unused-handleDragOver",
+    title: "handleDragOver() flagged as unused",
+    severity: "low", category: "Unused functions (false positives)",
+    verdict: "false-positive",
+    description: "Used in template: ondragover={handleDragOver} (line 807). Reachable, keep.",
+    files: ["src/routes/+page.svelte:501", "src/routes/+page.svelte:807"]
+  },
+  {
+    id: "unused-handleDragLeave",
+    title: "handleDragLeave() flagged as unused",
+    severity: "low", category: "Unused functions (false positives)",
+    verdict: "false-positive",
+    description: "Used in template: ondragleave={handleDragLeave} (line 808). Reachable, keep.",
+    files: ["src/routes/+page.svelte:506", "src/routes/+page.svelte:808"]
+  },
+  {
+    id: "unused-handleDrop",
+    title: "handleDrop() flagged as unused",
+    severity: "low", category: "Unused functions (false positives)",
+    verdict: "false-positive",
+    description: "Used in template: ondrop={handleDrop} (line 809). Reachable, keep.",
+    files: ["src/routes/+page.svelte:510", "src/routes/+page.svelte:809"]
+  },
+  {
+    id: "unused-handleFileInput",
+    title: "handleFileInput() flagged as unused",
+    severity: "low", category: "Unused functions (false positives)",
+    verdict: "false-positive",
+    description: "Used in template: onchange={handleFileInput} (line 829). Reachable, keep.",
+    files: ["src/routes/+page.svelte:518", "src/routes/+page.svelte:829"]
+  }
+];
+
+/* ---------- state (localStorage) ---------- */
+const STORE_KEY = "habitatradar-analysis-tracker";
+const STATUSES = ["Todo", "In progress", "Done", "Won't do"];
+let state = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
+function save() { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
+function itemState(id) { return state[id] || { status: "Todo", notes: "" }; }
+function setItem(id, patch) { state[id] = { ...itemState(id), ...patch }; save(); render(); }
+
+/* ---------- filters ---------- */
+let sevFilter = "all";
+let query = "";
+
+const SEV_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
+
+function render() {
+  const list = document.getElementById("list");
+  list.innerHTML = "";
+
+  let items = FINDINGS.filter(f => {
+    if (sevFilter !== "all" && f.severity !== sevFilter) return false;
+    if (query) {
+      const hay = (f.title + " " + (f.description||"") + " " + (f.category||"") + " " + (f.files||[]).join(" ")).toLowerCase();
+      if (!hay.includes(query)) return false;
+    }
+    return true;
+  });
+
+  items.sort((a, b) => (SEV_ORDER[a.severity] ?? 9) - (SEV_ORDER[b.severity] ?? 9));
+
+  if (!items.length) {
+    list.innerHTML = '<div class="empty">No findings match your filters.</div>';
+  }
+
+  // group by category
+  const groups = {};
+  items.forEach(f => { (groups[f.category || "Uncategorized"] ||= []).push(f); });
+
+  Object.keys(groups).sort().forEach(cat => {
+    const h = document.createElement("div");
+    h.className = "group-title";
+    h.textContent = cat + " · " + groups[cat].length;
+    list.appendChild(h);
+    groups[cat].forEach(f => list.appendChild(card(f)));
+  });
+
+  renderStats();
+}
+
+function card(f) {
+  const st = itemState(f.id);
+  const el = document.createElement("div");
+  el.className = "card" + (st.status === "Done" || st.status === "Won't do" ? " done" : "");
+  el.dataset.sev = f.severity;
+
+  const files = (f.files && f.files.length)
+    ? `<div class="files">${f.files.map(p => `<code>${esc(p)}</code>`).join(" ")}</div>` : "";
+
+  el.innerHTML = `
+    <div class="card-head">
+      <h3>${esc(f.title)}</h3>
+      <div class="badges">
+        <span class="badge sev-${f.severity}">${f.severity}</span>
+        ${f.category ? `<span class="badge cat">${esc(f.category)}</span>` : ""}
+        ${f.verdict ? `<span class="badge verdict-${f.verdict}">${esc(f.verdict.replace(/-/g," "))}</span>` : ""}
+      </div>
+    </div>
+    ${f.description ? `<p class="desc">${esc(f.description)}</p>` : ""}
+    ${files}
+    <div class="card-foot">
+      <select class="status">${STATUSES.map(s => `<option ${s===st.status?"selected":""}>${s}</option>`).join("")}</select>
+    </div>
+    <textarea class="notes" placeholder="Notes…">${esc(st.notes || "")}</textarea>
+  `;
+
+  el.querySelector(".status").addEventListener("change", e => setItem(f.id, { status: e.target.value }));
+  const ta = el.querySelector(".notes");
+  ta.addEventListener("input", e => { state[f.id] = { ...itemState(f.id), notes: e.target.value }; save(); });
+  return el;
+}
+
+function renderStats() {
+  const total = FINDINGS.length;
+  const done = FINDINGS.filter(f => itemState(f.id).status === "Done").length;
+  const prog = FINDINGS.filter(f => itemState(f.id).status === "In progress").length;
+  const counts = { critical:0, high:0, medium:0, low:0 };
+  FINDINGS.forEach(f => { if (itemState(f.id).status !== "Done") counts[f.severity] = (counts[f.severity]||0)+1; });
+
+  document.getElementById("stats").innerHTML = `
+    <span class="stat"><b>${done}</b>/${total} done</span>
+    <span class="stat"><b>${prog}</b> in progress</span>
+    <span class="stat" style="color:var(--red)"><b>${counts.critical}</b> critical open</span>
+    <span class="stat" style="color:var(--amber)"><b>${counts.high}</b> high open</span>
+  `;
+  document.getElementById("progressBar").style.width = total ? (done/total*100) + "%" : "0%";
+}
+
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+/* ---------- wire up ---------- */
+document.getElementById("search").addEventListener("input", e => { query = e.target.value.toLowerCase(); render(); });
+document.querySelectorAll("#sevFilters .chip").forEach(c => {
+  c.addEventListener("click", () => {
+    document.querySelectorAll("#sevFilters .chip").forEach(x => x.classList.remove("active"));
+    c.classList.add("active"); sevFilter = c.dataset.sev; render();
+  });
+});
+document.getElementById("reset").addEventListener("click", () => {
+  if (confirm("Reset all status and notes?")) { state = {}; save(); render(); }
+});
+
+render();
+</script>
+</body>
+</html>

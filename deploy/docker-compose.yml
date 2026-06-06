@@ -1,8 +1,8 @@
-# HabitatRadar app stack for the VPS.
+# HabitatRadar app stack for the server.
 #
-# Postgres is NOT defined here — it is the shared `staging` PostGIS server that
-# already runs on this host. We attach to its Docker network (external below)
-# and reach it as host `postgis:5432`, so DB traffic never leaves Docker.
+# Postgres is NOT defined here — it is a shared PostGIS server already running on
+# this host. We attach to its external Docker network and reach it by its service
+# name, so DB traffic never leaves Docker.
 #
 # Copy .env.example to .env and fill in the secrets before `docker compose up`.
 name: habitatradar
@@ -14,7 +14,7 @@ services:
     image: habitatradar-backend
     restart: unless-stopped
     environment:
-      DATABASE_URL: ${DATABASE_URL}          # REDACTED_ROLE (read-only)
+      DATABASE_URL: ${DATABASE_URL}          # read-only role
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN}
       PORT: "8080"
     networks: [db, web]
@@ -42,7 +42,7 @@ services:
     image: habitatradar-etl
     profiles: ["etl"]
     environment:
-      IMPORT_DATABASE_URL: ${IMPORT_DATABASE_URL}   # REDACTED_ROLE (write)
+      IMPORT_DATABASE_URL: ${IMPORT_DATABASE_URL}   # write role
       WFS_URL: ${WFS_URL:-}
       ETL_PARALLEL: ${ETL_PARALLEL:-3}
     networks: [db]
