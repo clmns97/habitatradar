@@ -22,6 +22,8 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import unquote, urlparse
 
 import psycopg2
@@ -30,6 +32,9 @@ WFS_URL = os.getenv("WFS_URL") or "https://geodienste.bfn.de/ogc/wfs/schutzgebie
 USER_AGENT = os.getenv("ETL_USER_AGENT") or "HabitatRadar-ETL/1.0"
 STAGING_SUFFIX = "_etl_staging"
 PER_LAYER_TIMEOUT_S = int(os.getenv("ETL_LAYER_TIMEOUT", "1800"))
+# How many layers to fetch+load concurrently (independent staging tables).
+MAX_PARALLEL = int(os.getenv("ETL_PARALLEL", "3"))
+WFS_PAGE_SIZE = os.getenv("ETL_WFS_PAGE_SIZE", "5000")
 
 # (WFS typeName, target table). Table names match backend/app/services.py.
 LAYERS: list[tuple[str, str]] = [
@@ -106,18 +111,23 @@ def load_layer_to_staging(typename: str, table: str, pg_conn: str) -> None:
         "-skipfailures",
         "-forceNullable",
         "-makevalid",
-        "--config", "OGR_WFS_PAGING_ALLOWED", "OFF",
+        "-gt", "unlimited",  # one transaction per layer — fewer remote round-trips
+        "--config", "PG_USE_COPY", "YES",  # COPY-based bulk load instead of INSERT
+        "--config", "OGR_WFS_PAGING_ALLOWED", "ON",
+        "--config", "OGR_WFS_PAGE_SIZE", WFS_PAGE_SIZE,  # stream fetch+parse
         "--config", "OGR_WFS_LOAD_MULTIPLE_LAYER_DEFN", "OFF",
         "--config", "GDAL_HTTP_USERAGENT", USER_AGENT,
         "--config", "CPL_DEBUG", "OFF",
     ]
     print(f"📡 Loading {typename} → {staging} ...", flush=True)
+    started = time.perf_counter()
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=PER_LAYER_TIMEOUT_S)
     if result.returncode != 0:
         raise RuntimeError(
             f"ogr2ogr failed (exit {result.returncode}).\n"
             f"STDERR: {result.stderr.strip()}\nSTDOUT: {result.stdout.strip()}"
         )
+    print(f"   …{staging} fetched in {time.perf_counter() - started:.0f}s", flush=True)
 
 
 def swap_staging_into_live(conn, table: str) -> int:
@@ -166,37 +176,64 @@ def swap_staging_into_live(conn, table: str) -> int:
     return rows
 
 
+def drop_staging(conn, table: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute(f'DROP TABLE IF EXISTS "{table + STAGING_SUFFIX}" CASCADE')
+    conn.commit()
+
+
 def main() -> int:
     dsn, pg_conn = parse_connection()
-    print(f"🌍 WFS: {WFS_URL}", flush=True)
+    print(f"🌍 WFS: {WFS_URL} (parallel={MAX_PARALLEL})", flush=True)
 
-    conn = psycopg2.connect(dsn)
-    try:
-        with conn.cursor() as cur:
+    with psycopg2.connect(dsn) as setup:
+        with setup.cursor() as cur:
             cur.execute("CREATE EXTENSION IF NOT EXISTS postgis")
-        conn.commit()
+        setup.commit()
 
-        succeeded, failed = [], []
-        for typename, table in LAYERS:
-            staging = table + STAGING_SUFFIX
+    # Phase 1: fetch + load every layer to its staging table, in parallel. The
+    # layers are independent and the work is network/insert bound, so concurrency
+    # is the big win. Each ogr2ogr opens its own connection.
+    loaded, failed = [], []
+    started = time.perf_counter()
+    with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as pool:
+        futures = {
+            pool.submit(load_layer_to_staging, typename, table, pg_conn): table
+            for typename, table in LAYERS
+        }
+        for future in as_completed(futures):
+            table = futures[future]
             try:
-                load_layer_to_staging(typename, table, pg_conn)
+                future.result()
+                loaded.append(table)
+            except Exception as exc:  # noqa: BLE001 — isolate per-layer failures
+                print(f"❌ {table} (load): {exc}", flush=True)
+                failed.append(table)
+    print(f"📦 Staging loads done in {time.perf_counter() - started:.0f}s", flush=True)
+
+    # Phase 2: swap each successfully-staged layer into its live table. Serial and
+    # fast — just DDL — so the API sees each table replaced atomically.
+    swapped = []
+    with psycopg2.connect(dsn) as conn:
+        for table in loaded:
+            try:
                 rows = swap_staging_into_live(conn, table)
                 print(f"✅ {table}: {rows} features", flush=True)
-                succeeded.append(table)
-            except Exception as exc:  # noqa: BLE001 — isolate per-layer failures
+                swapped.append(table)
+            except Exception as exc:  # noqa: BLE001
                 conn.rollback()
-                print(f"❌ {table}: {exc}", flush=True)
+                print(f"❌ {table} (swap): {exc}", flush=True)
                 failed.append(table)
             finally:
-                # Drop any leftover staging table from this run.
-                with conn.cursor() as cur:
-                    cur.execute(f'DROP TABLE IF EXISTS "{staging}" CASCADE')
-                conn.commit()
-    finally:
-        conn.close()
+                drop_staging(conn, table)
+        # Clean up staging tables left behind by failed loads.
+        for table in failed:
+            try:
+                drop_staging(conn, table)
+            except Exception:  # noqa: BLE001
+                conn.rollback()
 
-    print(f"\n🎯 Done: {len(succeeded)} refreshed, {len(failed)} failed", flush=True)
+    print(f"\n🎯 Done: {len(swapped)} refreshed, {len(failed)} failed", flush=True)
     if failed:
         print(f"   Failed: {', '.join(failed)}", flush=True)
         return 1
