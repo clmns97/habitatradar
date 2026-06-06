@@ -4,7 +4,8 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.schemas import HealthResponse, ProtectedAreasRequest
+from app.geojson_service import transform_to_wgs84
+from app.schemas import HealthResponse, ProtectedAreasRequest, TransformGeoJSONRequest
 from app.services import find_nearest_protected_areas, warm_table_cache
 
 
@@ -44,6 +45,18 @@ async def nearest_protected_areas(payload: ProtectedAreasRequest):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Query failed: {exc}") from exc
+
+
+@app.post("/api/transform-geojson")
+async def transform_geojson(payload: TransformGeoJSONRequest):
+    if "type" not in payload.geojson:
+        raise HTTPException(status_code=400, detail="Invalid GeoJSON: missing 'type'")
+    try:
+        return transform_to_wgs84(payload.geojson, payload.source_crs)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Transform failed: {exc}") from exc
 
 
 if __name__ == "__main__":
