@@ -103,14 +103,19 @@ def load_layer_to_staging(typename: str, table: str, pg_conn: str) -> None:
         "-overwrite",
         "-t_srs", "EPSG:3035",
         "-lco", "GEOMETRY_NAME=geom",
-        "-lco", "FID=id",
+        # NOTE: do NOT force "FID=id" — several BfN layers carry a *string* "id"
+        # attribute, which collides with an integer FID column ("Wrong field type
+        # for ID"). We let GDAL create its own integer "ogc_fid" and guarantee an
+        # "id" column at swap time instead (see swap_staging_into_live).
         "-lco", "SPATIAL_INDEX=NONE",  # index is created with a stable name at swap
         "-nlt", "PROMOTE_TO_MULTI",
         "-nlt", "CONVERT_TO_LINEAR",
         "-nlt", "MultiPolygon",
-        "-skipfailures",
         "-forceNullable",
         "-makevalid",
+        # NOTE: -skipfailures is intentionally NOT set — recent GDAL forbids
+        # combining it with -gt (skipfailures forces per-feature commits). We
+        # rely on -makevalid to repair geometries and keep the fast bulk load.
         "-gt", "unlimited",  # one transaction per layer — fewer remote round-trips
         "--config", "PG_USE_COPY", "YES",  # COPY-based bulk load instead of INSERT
         "--config", "OGR_WFS_PAGING_ALLOWED", "ON",
@@ -138,6 +143,24 @@ def swap_staging_into_live(conn, table: str) -> int:
         rows = cur.fetchone()[0]
         if rows == 0:
             raise RuntimeError(f"staging table {staging} is empty — keeping live data")
+
+        # Ensure an "id" column exists for the backend query. When the layer has
+        # no source "id" attribute, promote GDAL's generated "ogc_fid".
+        cur.execute(
+            """
+            SELECT
+              bool_or(column_name = 'id')        AS has_id,
+              bool_or(column_name = 'ogc_fid')   AS has_ogc_fid
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = %s
+            """,
+            (staging,),
+        )
+        has_id, has_ogc_fid = cur.fetchone()
+        if not has_id:
+            if not has_ogc_fid:
+                raise RuntimeError(f"{staging} has neither 'id' nor 'ogc_fid'")
+            cur.execute(f'ALTER TABLE "{staging}" RENAME COLUMN ogc_fid TO id')
 
         # Ensure a "name" column exists for the backend query.
         src = NAME_SOURCE.get(table)

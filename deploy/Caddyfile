@@ -1,0 +1,5 @@
+# Public HTTPS entrypoint. Caddy obtains/renews a Let's Encrypt cert for
+# {$API_DOMAIN} automatically (needs ports 80+443 reachable from the internet).
+{$API_DOMAIN} {
+	reverse_proxy backend:8080
+}
