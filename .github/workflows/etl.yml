@@ -1,0 +1,31 @@
+name: ETL Refresh
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Every Sunday at 03:00 UTC
+    - cron: '0 3 * * 0'
+
+jobs:
+  etl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install GDAL (ogr2ogr)
+        run: sudo apt-get update -qq && sudo apt-get install -y gdal-bin
+
+      - name: Install Python dependencies
+        run: pip install -r backend/etl/requirements.txt
+
+      - name: Refresh protected-area tables from WFS
+        env:
+          IMPORT_DATABASE_URL: ${{ secrets.IMPORT_DATABASE_URL }}
+          WFS_URL: ${{ secrets.WFS_URL }}
+        run: python backend/etl/refresh_wfs.py

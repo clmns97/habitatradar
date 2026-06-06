@@ -111,3 +111,32 @@ Required Google Cloud APIs:
 - `run.googleapis.com`
 - `artifactregistry.googleapis.com`
 - `cloudbuild.googleapis.com`
+
+## Data refresh (ETL)
+
+Protected-area tables are loaded from the [BfN WFS service](https://geodienste.bfn.de/ogc/wfs/schutzgebiet)
+by `backend/etl/refresh_wfs.py` and refreshed automatically by
+`.github/workflows/etl.yml`, which runs every Sunday at 03:00 UTC (and can be
+triggered manually via *workflow_dispatch*).
+
+For each of the nine layers the job loads the data into a staging table with
+`ogr2ogr` (reprojected to EPSG:3035, geometry column `geom`, FID column `id`),
+verifies it received rows, then atomically swaps it into the live table — so the
+API keeps serving the previous data until the swap commits.
+
+Required GitHub Actions secret:
+
+- `IMPORT_DATABASE_URL` — Postgres connection URL for the write/ETL role. Use a
+  **direct** (non-pooled) Neon endpoint; a `-pooler` host is stripped
+  automatically.
+
+Optional:
+
+- `WFS_URL` — overrides the default BfN WFS endpoint.
+
+Run it locally against your own database:
+
+```bash
+pip install -r backend/etl/requirements.txt   # plus system gdal-bin for ogr2ogr
+IMPORT_DATABASE_URL="postgresql://user:pass@host/db" python backend/etl/refresh_wfs.py
+```
