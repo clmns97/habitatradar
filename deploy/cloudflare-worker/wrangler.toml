@@ -1,0 +1,6 @@
+name = "habitatradar-api"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+# workers.dev subdomain stays enabled so the API is reachable at
+# https://habitatradar-api.<your-account-subdomain>.workers.dev
+workers_dev = true
