@@ -1,0 +1,7 @@
+# Test/dev dependencies for the backend. Install into the app interpreter:
+#   .venv/bin/python3.13 -m pip install -r backend/requirements-dev.txt
+-r requirements.txt
+pytest==8.3.4
+# psycopg2 is an ETL runtime dep (etl/requirements.txt); needed here so the
+# refresh_wfs module can be imported under the test interpreter.
+psycopg2-binary==2.9.10

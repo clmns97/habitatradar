@@ -10,9 +10,11 @@
 		fetchNearestProtectedAreas,
 		fetchNearestProtectedAreasByGeoJSON,
 		groupByAreaType,
+		transformGeoJSONToWGS84,
 		type ProtectedAreaFeature
 	} from '$lib/protected-areas';
 	import { forEachPosition, parseUploadedGeoJSON, type UploadedFeature } from '$lib/uploaded-geojson';
+	import { escapeHtml, buildUploadedPopupHTML } from '$lib/popup-html';
 
 	let mapContainer: HTMLDivElement;
 	let map: Map | null = null;
@@ -23,6 +25,7 @@
 
 	let loading = $state(false);
 	let error = $state<string | null>(null);
+	let notice = $state<string | null>(null);
 	let clickInfo = $state<{ lng: number; lat: number } | null>(null);
 	let radiusKm = $state(50);
 	let features = $state<ProtectedAreaFeature[]>([]);
@@ -299,44 +302,20 @@
 					? `${(v as number).toFixed(2)} km`
 					: String(v ?? '—');
 				return `<tr>
-					<td style="padding:3px 10px 3px 0;color:#6b7280;white-space:nowrap;font-size:11px;text-transform:uppercase;letter-spacing:0.04em">${label}</td>
-					<td style="padding:3px 0;font-size:12px;font-weight:500;color:#111827">${value}</td>
+					<td style="padding:3px 10px 3px 0;color:#6b7280;white-space:nowrap;font-size:11px;text-transform:uppercase;letter-spacing:0.04em">${escapeHtml(label)}</td>
+					<td style="padding:3px 0;font-size:12px;font-weight:500;color:#111827">${escapeHtml(value)}</td>
 				</tr>`;
 			}).join('');
 		return `
 			<div style="font-family:system-ui,sans-serif;padding:2px 0;color:#111827">
 				<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
 					<span style="width:10px;height:10px;border-radius:50%;background:${color};flex-shrink:0;display:inline-block"></span>
-					<span style="font-size:13px;font-weight:700;line-height:1.3;color:#111827">${props.name ?? 'Unnamed area'}</span>
+					<span style="font-size:13px;font-weight:700;line-height:1.3;color:#111827">${escapeHtml(props.name ?? 'Unnamed area')}</span>
 				</div>
 				<table style="border-collapse:collapse;width:100%">${rows}</table>
 			</div>`;
 	}
 
-	function buildUploadedPopupHTML(feature: any): string {
-		const props = feature?.properties ?? {};
-		const rows = Object.entries(props)
-			.filter(([k]) => !k.startsWith('__'))
-			.map(([k, v]) => {
-				const label = k.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-				const value = String(v ?? '—');
-				return `<tr>
-					<td style="padding:3px 10px 3px 0;color:#6b7280;white-space:nowrap;font-size:11px;text-transform:uppercase;letter-spacing:0.04em">${label}</td>
-					<td style="padding:3px 0;font-size:12px;font-weight:500;color:#111827">${value}</td>
-				</tr>`;
-			})
-			.join('');
-
-		const title = props.__upload_name ?? props.name ?? 'Uploaded feature';
-		return `
-			<div style="font-family:system-ui,sans-serif;padding:2px 0;color:#111827">
-				<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-					<span style="width:10px;height:10px;border-radius:50%;background:#1d4ed8;flex-shrink:0;display:inline-block"></span>
-					<span style="font-size:13px;font-weight:700;line-height:1.3;color:#111827">${title}</span>
-				</div>
-				<table style="border-collapse:collapse;width:100%">${rows || '<tr><td style="font-size:12px;color:#6b7280">No properties</td></tr>'}</table>
-			</div>`;
-	}
 
 	function featureCentroid(feature: ProtectedAreaFeature): [number, number] {
 		const geom = feature.geometry;
@@ -409,6 +388,7 @@
 
 	function resetAll() {
 		error = null;
+		notice = null;
 		clickInfo = null;
 		features = [];
 		uploadedFeatures = [];
@@ -526,7 +506,23 @@
 	async function loadGeoJSONFile(file: File) {
 		try {
 			const text = await file.text();
-			const geojson = JSON.parse(text) as unknown;
+			let geojson = JSON.parse(text) as unknown;
+			notice = null;
+
+			// Detect the CRS and reproject to WGS84 if needed, so non-WGS84 uploads
+			// (e.g. EPSG:3035) display and search in the right place.
+			try {
+				const result = await transformGeoJSONToWGS84(geojson);
+				if (result.transformed) {
+					geojson = result.transformed_geojson;
+					notice = `Reprojected from ${result.source_crs} to WGS84`;
+				}
+			} catch (transformErr) {
+				notice =
+					(transformErr instanceof Error ? transformErr.message : 'CRS check failed') +
+					' — assuming WGS84';
+			}
+
 			const { uploadedFeatures: parsedFeatures, displayGeoJSON } = parseUploadedGeoJSON(geojson);
 
 			uploadedFeatures = parsedFeatures;
@@ -547,6 +543,7 @@
 			}
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to parse GeoJSON file';
+			notice = null;
 			uploadedFeatures = [];
 			activeUploadedFeatureId = null;
 			hoveredUploadedFeatureId = null;
@@ -856,6 +853,9 @@
 					<span class="loading loading-spinner loading-xs"></span>
 					<span>Scanning area...</span>
 				</div>
+			{/if}
+			{#if notice}
+				<div class="border-b border-base-300 bg-info/10 px-4 py-2 text-xs text-info">{notice}</div>
 			{/if}
 			{#if error}
 				<div class="border-b border-base-300 bg-error/10 px-4 py-2 text-xs text-error">{error}</div>
